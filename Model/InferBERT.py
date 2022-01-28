@@ -54,9 +54,9 @@ def main(model_cfg='config/SentGen/bert_base.json',
     for batch in data_iter:
         batch = [t.to(device) for t in batch]
         with torch.no_grad(): # evaluation without gradient calculation
-            input_ids, segment_ids, input_mask, masked_ids, masked_pos, masked_weights, is_next = batch
+            input_ids, segment_ids, input_mask, masked_ids, masked_pos, _, is_next = batch
 
-            logits_lm, logits_clsf = model(input_ids, segment_ids, input_mask, masked_pos)
+            logits_lm, logits_clsf, _, _, _ = model(input_ids, segment_ids, input_mask, masked_pos)
 
 
             pred_token_ids = torch.argmax(logits_lm, dim=2)
