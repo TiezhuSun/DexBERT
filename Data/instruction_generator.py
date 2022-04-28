@@ -19,9 +19,13 @@ class SmaliClass(object):
     def __init__(self):
         self.name = ''
         self.methods = []
+        self.api_names = []
     
     def add_method(self, method: Method):
         self.methods.append(method)
+
+    def add_api_name(self, api_name: str):
+        self.api_names.append(api_name)
 
 
 def FunctionGenerator(SmaliFile):

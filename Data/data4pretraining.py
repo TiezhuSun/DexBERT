@@ -6,6 +6,7 @@ remove original apk
 import os
 import os.path as osp
 import argparse
+import logging
 
 import time
 import pickle
@@ -14,13 +15,22 @@ import psutil
 import json
 import multiprocessing as mp
 from datetime import timedelta
-from common_modules import logger
 from generate_vocab import gen_vocab
 
 from disassemble import Disassemble
 from instruction_generator import SmaliInstructionGenerator, ClassDictionary
 
-API_key = "56db9ee4e64658dd78472c0e57c224ddcb3269ad22fa131294537d5fa7690660"
+API_key = "************************"  # One could apply for it on https://androzoo.uni.lu/
+
+'''logger'''
+logging.basicConfig(level=logging.INFO,filename="LogFile.log",filemode="a",
+                    format='%(asctime)s %(filename)s[line:%(lineno)d] %(levelname)s: %(message)s',
+                    datefmt='%Y/%m/%d %H:%M:%S')
+ErrorHandler = logging.StreamHandler()
+ErrorHandler.setLevel(logging.ERROR)
+ErrorHandler.setFormatter(logging.Formatter('%(asctime)s %(filename)s[line:%(lineno)d] %(levelname)s: %(message)s'))
+logger = logging.getLogger()
+logger.addHandler(ErrorHandler)
 
 def DownloadApk(ApkFile):
     '''
