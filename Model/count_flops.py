@@ -3,7 +3,7 @@ from ptflops import get_model_complexity_info
 
 import models
 from pretrainDexBERT import BertAEModel4Pretrain
-from MaliciousCodeLocalization import MaliciousClassDetector
+from task_modules import PredictionModel
 
 device = 'cuda:3'
 
@@ -26,13 +26,10 @@ if __name__ == "__main__":
     print('{:<30}  {:<8}'.format('Computational complexity: ', macs))
     print('{:<30}  {:<8}'.format('Number of parameters: ', params))
     
-    # Malicious Code Localization
+    # Prediction Model in Downstream Tasks
     model_cfg = models.Config.from_json("config/AE/bert_base.json")
-
     input_shape = ((1, 128))
-
-    net = MaliciousClassDetector().to(device)
-
+    net = PredictionModel().to(device)
     macs, params = get_model_complexity_info(net, input_shape, as_strings=True,
                                             print_per_layer_stat=True, verbose=True)
     print('{:<30}  {:<8}'.format('Computational complexity: ', macs))

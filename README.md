@@ -1,5 +1,5 @@
 # DexBERT
-Android Representation based on BERT
+A Pre-trained BERT for Representation learning of Android Applications
 
 # Environment
 
@@ -34,8 +34,8 @@ Training & Evaluation:
   - First, download the APKs with link: https://github.com/breezedong/DNN-based-software-defect-prediction; labels for defective smali file are saved in ```Data/data/defect_labels```
   - Second, extract Smali instructions: ```python data4defect.py```
 
-Training & Evaluation:
+  - Training & Evaluation:
   - ```python AppDefectDetection.py```
 
-## compute model flops
+## Compute Model Flops
   - ```python count_flops.py```

@@ -1,5 +1,3 @@
-# Copyright 2022 The Google AI Language Team Authors, The HugginFace Inc. team and Tiezhu SUN, Kevin Allix.
-
 """ Tokenization classes (It's exactly the same code as Google BERT code """
 
 from __future__ import absolute_import

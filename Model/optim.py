@@ -1,6 +1,3 @@
-# Copyright 2018 The Google AI Language Team Authors and The HugginFace Inc. team,
-# and Dong-Hyun Lee, Kakao Brain.
-
 """ a slightly modified version of Hugging Face's BERTAdam class """
 
 import math

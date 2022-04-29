@@ -86,7 +86,6 @@ class Trainer():
         self.cfg = MIL_train_cfg # config for training : see class Config in train.py
         self.BertAEmodel = BertAEmodel
         self.MalClassModel = MalClassModel
-        # self.optimizer_BertAE = optimizer_BertAE
         self.optimizer_MIL = optimizer_MIL
         self.save_dir = save_dir
         self.log_dir = log_dir
