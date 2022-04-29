@@ -24,14 +24,14 @@ Android Representation based on BERT
 
 ## Malicious Code Localization
 Data preparation: 
-  - First, download the APKs with link: 
+  - First, download APKs and ground-truth with link: https://sites.google.com/view/mkldroid/dataset-and-results
   - Second, extract Smali instructions: ```python data4malice.py```
 
 Training & Evaluation:
   - ```python MaliciousCodeLocalizarion.py```
 
 ## App defect detection
-  - First, download the APKs with link: 
+  - First, download the APKs with link: https://github.com/breezedong/DNN-based-software-defect-prediction; labels for defective smali file are saved in ```Data/data/defect_labels```
   - Second, extract Smali instructions: ```python data4defect.py```
 
 Training & Evaluation:
