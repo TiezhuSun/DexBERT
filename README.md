@@ -31,10 +31,11 @@ Training & Evaluation:
   - ```python MaliciousCodeLocalizarion.py```
 
 ## App defect detection
+Data preparation:
   - First, download the APKs with link: https://github.com/breezedong/DNN-based-software-defect-prediction; labels for defective smali file are saved in ```Data/data/defect_labels```
   - Second, extract Smali instructions: ```python data4defect.py```
 
-  - Training & Evaluation:
+Training & Evaluation:
   - ```python AppDefectDetection.py```
 
 ## Compute Model Flops
