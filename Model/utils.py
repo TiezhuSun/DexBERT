@@ -1,5 +1,3 @@
-# Copyright 2022 Dong-Hyun Lee, Kakao Brain and Tiezhu SUN, Kevin Allix.
-
 """ Utils Functions """
 
 import os

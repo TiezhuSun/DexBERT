@@ -1,7 +1,4 @@
-# Copyright 2022 Tiezhu SUN, Kevin Allix.
-# (Strongly inspired by https://github.com/dhlee347/pytorchic-bert)
-
-""" Pretrain transformer with Masked LM, Sentence Classification and AutoEncoder """
+""" Pretrain transformer with Masked LM and Next Sentence Prediction """
 
 from random import randint, shuffle
 from random import random as rand
@@ -18,10 +15,7 @@ import train
 
 from utils import set_seeds, get_device, get_random_word, truncate_tokens_pair
 
-
 import os
-os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
-os.environ["CUDA_VISIBLE_DEVICES"]= "0,1"
 
 def seek_random_offset(f, back_margin=2000):
     """ seek random offset of file pointer """
@@ -43,7 +37,7 @@ class SentPairDataLoader():
         self.pipeline = pipeline
         self.batch_size = batch_size
 
-    def read_tokens(self, f, length, discard_last_and_restart=True, keep_method_name=True):
+    def read_tokens(self, f, length, discard_last_and_restart=True, keep_method_name=False):
         """ Read tokens from file pointer with limited length """
         tokens = []
         while len(tokens) < length:
@@ -206,17 +200,21 @@ class BertAEModel4Pretrain(nn.Module):
         return logits_lm, logits_clsf, r1, reconstruction, r2
 
 
-def main(train_cfg='config/pretrain.json',
-         model_cfg='config/bert_base.json',
-         data_file='../tbc/books_large_all.txt',
+def main(train_cfg='config/DexBERT/pretrain.json',
+         model_cfg='config/DexBERT/bert_base.json',
+         data_file='../Data/data/pre-train/data_file.txt',
          model_file=None,
          data_parallel=True,
-         vocab='../uncased_L-12_H-768_A-12/vocab.txt',
-         save_dir='../exp/bert/pretrain',
-         log_dir='../exp/bert/pretrain/runs',
+         vocab='../Data/data/pre-train/vocab.txt',
+         save_dir='../save_dir/DexBERT',
+         log_dir='../log_dir/DexBERT',
          max_len=512,
          max_pred=20,
-         mask_prob=0.15):
+         mask_prob=0.15,
+         GPUs='0,1'):
+
+    os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
+    os.environ["CUDA_VISIBLE_DEVICES"]= str(GPUs)
 
     cfg = train.Config.from_json(train_cfg)
     model_cfg = models.Config.from_json(model_cfg)

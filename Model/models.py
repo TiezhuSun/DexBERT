@@ -1,6 +1,3 @@
-# Copyright 2022 Tiezhu SUN, Kevin Allix.
-# (Strongly inspired by  https://github.com/dhlee347/pytorchic-bert)
-
 """ Transformer Model Classes & Config Class """
 
 import math
