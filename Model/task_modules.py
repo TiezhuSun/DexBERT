@@ -9,7 +9,7 @@ from pretrainDexBERT import Pipeline
 from utils import truncate_tokens
 
 class Config(NamedTuple):
-    "Configuration for MIL model & training"
+    "Configuration for prediction model & training"
     # model
     input_len: int = 128
     embedding_len: int = 64
@@ -119,7 +119,7 @@ class ClassSeqDataLoader():
 
 
 class Preprocess4EmbeddingIntegration(Pipeline):
-    """ Pre-processing steps for embedding integration with BERT, AE and MIL. """
+    """ Pre-processing steps for embedding integration. """
     def __init__(self, indexer, max_len=512):
         super().__init__()
         self.max_len = max_len
