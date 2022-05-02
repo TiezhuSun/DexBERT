@@ -36,11 +36,11 @@ A Pre-trained BERT for Representation learning of Android Applications
 
 ## App Defect Detection
   - Data preparation:
-   - First, download the APKs with link: https://github.com/breezedong/DNN-based-software-defect-prediction; labels for defective smali files are provided in ```Data/data/defect_labels```
-   - Second, extract Smali instructions and generate sample list: ```python data4defect.py```
+    - First, download the APKs with link: https://github.com/breezedong/DNN-based-software-defect-prediction; labels for defective smali files are provided in ```Data/data/defect_labels```
+    - Second, extract Smali instructions and generate sample list: ```python data4defect.py```
 
   - Training & Evaluation:
-   - ```python AppDefectDetection.py```
+    - ```python AppDefectDetection.py```
 
 ## Compute Model Flops
   - ```python count_flops.py```
