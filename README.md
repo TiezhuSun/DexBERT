@@ -1,5 +1,5 @@
 # DexBERT
-A Pre-trained BERT for Representation learning of Android Applications
+A Pre-trained BERT for Finer-grained Representation learning of Android Applications
 
 # Environment
 
@@ -15,7 +15,7 @@ A Pre-trained BERT for Representation learning of Android Applications
 
 # Usage
 
-## AndroBERT Pre-training
+## DexBERT Pre-training
   - Data preparation: 
     - First, find apk hash list at: ```Data/data/pretraining_apks.txt```
     - Second, download and process APKs: ```python data4pretraining.py -d apk_dir -l apk_hash_list -cp cpu_number```
