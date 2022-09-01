@@ -1,5 +1,5 @@
 # DexBERT
-A Pre-trained BERT for Finer-grained Representation learning of Android Applications
+Effective, Task-Agnostic and Fine-grained Representation Learning of Android Applications
 
 # Environment
 
