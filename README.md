@@ -1,5 +1,5 @@
 # DexBERT
-Effective, Task-Agnostic and Fine-grained Representation Learning of Android Applications
+Effective, Task-Agnostic and Fine-grained Representation Learning of Android Bytecode
 
 # Environment
 
