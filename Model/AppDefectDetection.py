@@ -25,13 +25,14 @@ from utils import set_seeds, get_device
 
 class ClassEmbeddingLoader():
     '''Load class embedding generated from pre-trained BERT model.'''
-    def __init__(self, malware_samp_file, sample_list, batch_size, shuffle_list=True, benign_ratio=0.5):
+    def __init__(self, malware_samp_file, sample_list, batch_size, postfix, shuffle_list=True, benign_ratio=0.5):
         super().__init__()
         self.apk_list = [x.split(',')[0] for x in open(malware_samp_file, 'r').readlines()]
         self.class_set = set(sample_list)
         self.batch_size = batch_size
         self.benign_ratio = benign_ratio
         self.shuffle_list = shuffle_list
+        self.postfix = postfix
         
         if shuffle_list:
             self.apk_list = shuffle(self.apk_list)
@@ -39,7 +40,7 @@ class ClassEmbeddingLoader():
     def read_class_emb(self):
         for apk_bin in self.apk_list:
             version_name = apk_bin.split('/')[-1].split('.txt')[0]
-            apk_emb = pickle.load(open(apk_bin.replace('.txt', '.loc.pkl'), 'rb'))
+            apk_emb = pickle.load(open(apk_bin.replace('.txt', self.postfix), 'rb'))
             class_vecs, class_labels, class_names, _ = apk_emb
             sample_list = [(x, y, z) for x, y, z in zip(class_vecs, class_labels, class_names)]
             if self.shuffle_list:
@@ -99,10 +100,10 @@ class Trainer(BaseTrainer):
         self.device = device # device name
         self.apk_list = []
 
-    def train(self, data_file, train_list, vocab, batch_size, recompute_class_embeddings, token_max_len=512, benign_ratio=1.0):
+    def train(self, data_file, train_list, vocab, batch_size, recompute_class_embeddings, token_max_len=512, benign_ratio=1.0, postfix='.locAE128.pkl'):
         """ Train Loop """
         if recompute_class_embeddings:
-            self.compute_class_embeddings(data_file, vocab, token_max_len)
+            self.compute_class_embeddings(data_file, vocab, postfix, token_max_len)
             torch.cuda.empty_cache()
                 
         self.MalClassModel.train() # train mode
@@ -115,7 +116,7 @@ class Trainer(BaseTrainer):
         for e in range(self.cfg.n_epochs):
             loss_sum = 0. # the sum of iteration losses to get average loss in every epoch
             
-            data_loader = ClassEmbeddingLoader(data_file, train_list, batch_size, benign_ratio=benign_ratio)
+            data_loader = ClassEmbeddingLoader(data_file, train_list, batch_size, postfix, benign_ratio=benign_ratio)
             apk_iter_bar = tqdm(data_loader, desc='Iter (loss=X.XXX)')
 
             for i, sample in enumerate(apk_iter_bar): 
@@ -163,16 +164,16 @@ class Trainer(BaseTrainer):
         torch.save(self.MalClassModel.state_dict(), # save model object before nn.DataParallel
             os.path.join(self.save_dir, 'model_steps_'+str(i)+'.pt'))
 
-    def evaluate(self, eval_data_file, test_list, model_weights, vocab, recompute_class_embeddings=False, training_mode=False, token_max_len=512, benign_ratio=1.0):
+    def evaluate(self, eval_data_file, test_list, model_weights, vocab, recompute_class_embeddings=False, training_mode=False, token_max_len=512, postfix='.locAE128.pkl'):
         if recompute_class_embeddings:
-            self.compute_class_embeddings(eval_data_file, vocab, token_max_len)
+            self.compute_class_embeddings(eval_data_file, vocab, postfix, token_max_len)
         
         if not training_mode:
             self.MalClassModel.load_state_dict(torch.load(model_weights), strict=False)
             self.MalClassModel = self.MalClassModel.to(self.device)
         self.MalClassModel.eval()
                 
-        data_loader = ClassEmbeddingLoader(eval_data_file, test_list, self.cfg.MCD_batch_size, shuffle_list=False, benign_ratio=1.0)
+        data_loader = ClassEmbeddingLoader(eval_data_file, test_list, self.cfg.MCD_batch_size, postfix, shuffle_list=False, benign_ratio=1.0)
         apk_iter_bar = tqdm(data_loader, desc='Iter (loss=X.XXX)')
 
         pre_list = []
@@ -223,16 +224,16 @@ def main(Bert_train_cfg='config/DexBERT/pretrain.json',
          train_list='../Data/data/WPDP/AnkiDroid/random_part_0_1_2_3.txt',
          test_list='../Data/data/WPDP/AnkiDroid/random_part_4.txt',
          BertAEmodel_file='../save_dir/AutoEncoderV3/model_steps_604364.pt',
+         AE_model_file='768AE128.pth',
          MalClassModel_file='../save_dir/app_defect_detection/model_steps_347955.pt',
          vocab='../Data/data/pre-train/vocab.txt',
          save_dir='../save_dir/app_defect_detection',
          log_dir='../log_dir/app_defect_detection',
          max_len=512,
          GPUs='0',
-         recompute_class_embeddings=False,
-         training_mode=False,
-         testing_mode=False,
-         benign_ratio=1.0):
+         recompute_class_embeddings=True,
+         training_mode=True,
+         testing_mode=True):
     
     os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
     os.environ["CUDA_VISIBLE_DEVICES"]= str(GPUs)
@@ -245,7 +246,15 @@ def main(Bert_train_cfg='config/DexBERT/pretrain.json',
 
     if recompute_class_embeddings:
         BertAE = BertAEModel(Bert_model_cfg)
-        BertAE.load_state_dict(torch.load(BertAEmodel_file), strict=False)
+        
+        # BertAE.load_state_dict(torch.load(BertAEmodel_file), strict=False)
+
+        pretrained_state_dict = torch.load(BertAEmodel_file)
+        # Filter out the keys corresponding to the layer you want to skip
+        filtered_state_dict = {k: v for k, v in pretrained_state_dict.items() if "AE_Layer_1" not in k and "AE_Layer_2" not in k}
+        BertAE.load_state_dict(filtered_state_dict, strict=False)
+        device = torch.device("cuda:0")
+        BertAE.load_state_dict(torch.load(AE_model_file, map_location=device), strict=False)
     else:
         BertAE = None
 
@@ -255,10 +264,10 @@ def main(Bert_train_cfg='config/DexBERT/pretrain.json',
     trainer = Trainer(MIL_cfg, BertAE, MalClassModel, optimizer_MIL, save_dir, log_dir, get_device())
     if training_mode:
         train_list = ['/'.join(x.strip().split('/')[1:]) for x in open(train_list, 'r').readlines()]
-        trainer.train(train_file, train_list, vocab, MIL_cfg.MCD_batch_size, recompute_class_embeddings, max_len, float(benign_ratio))
+        trainer.train(train_file, train_list, vocab, MIL_cfg.MCD_batch_size, recompute_class_embeddings, max_len, postfix='.locAE128.pkl')
     if testing_mode:
        test_list = ['/'.join(x.strip().split('/')[1:]) for x in open(test_list, 'r').readlines()]
-       trainer.evaluate(test_file, test_list, MalClassModel_file, vocab, recompute_class_embeddings, training_mode, max_len)
+       trainer.evaluate(test_file, test_list, MalClassModel_file, vocab, recompute_class_embeddings, training_mode, max_len, postfix='.locAE128.pkl')
 
 if __name__ == '__main__':
 

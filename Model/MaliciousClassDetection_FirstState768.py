@@ -16,11 +16,32 @@ from random import random
 import models
 import optim
 import train
+
+from MaliciousCodeLocalization import Trainer as BaseTrainer
+from task_modules import Preprocess4EmbeddingIntegration, ClassSeqDataLoader, Config
+from utils import set_seeds, get_device
 import tokenization
 
-from task_modules import Config, BertAEModel, ClassSeqDataLoader, Preprocess4EmbeddingIntegration, PredictionModel
-from utils import set_seeds, get_device
 
+class BertAEModel(nn.Module):
+    "Bert Model for Pretrain : Masked LM and next sentence classification"
+    def __init__(self, cfg):
+        super().__init__()
+        self.transformer = models.Transformer(cfg)
+
+        # auto-encoder
+        self.AE_Layer_1 = nn.Linear(cfg.max_len*cfg.dim, cfg.max_len)
+        self.AE_Layer_2 = nn.Linear(cfg.max_len, cfg.class_vec_len)
+
+    def forward(self, input_ids, segment_ids, input_mask):
+        h = self.transformer(input_ids, segment_ids, input_mask)
+
+        # auto-encoder
+        r1 = torch.flatten(h, start_dim=1)
+        x = self.AE_Layer_1(r1)
+        r2 = self.AE_Layer_2(x)
+
+        return r2, h
 
 class ClassEmbeddingLoader():
     '''Load class embedding generated from pre-trained BERT model.'''
@@ -80,20 +101,38 @@ class ClassEmbeddingLoader():
             yield batch_tensors, batch_class_names
 
 
-class Trainer():
+class MaliciousClassDetector(nn.Module):
+    def __init__(self):
+        super().__init__()
+        
+        self.classifier = nn.Sequential(
+            nn.Linear(768, 64),
+            nn.Tanh(),
+            nn.Linear(64, 32),
+            nn.Tanh(),
+            nn.Linear(32, 2),
+        )
+    
+    def forward(self, x):
+        prediction = self.classifier(x)
+        return prediction
+
+
+class Trainer(BaseTrainer):
     '''MIL Training Helper'''
     def __init__(self, MIL_train_cfg, BertAEmodel, MalClassModel, optimizer_MIL, save_dir, log_dir, device):
         super(Trainer, self).__init__(MIL_train_cfg, BertAEmodel, None, optimizer_MIL, save_dir, log_dir, device)
         self.cfg = MIL_train_cfg # config for training : see class Config in train.py
         self.BertAEmodel = BertAEmodel
         self.MalClassModel = MalClassModel
+        # self.optimizer_BertAE = optimizer_BertAE
         self.optimizer_MIL = optimizer_MIL
         self.save_dir = save_dir
         self.log_dir = log_dir
         self.device = device # device name
         self.apk_list = []
 
-    def compute_class_embeddings(self, data_file, vocab, postfix='.loc.pkl', token_max_len=512, data_parallel=True, DataLoader=None):
+    def compute_class_embeddings(self, data_file, vocab, postfix='.loc.pkl', token_max_len=512, data_parallel=True):
         self.BertAEmodel.eval() # evaluation mode
         self.BertAEmodel = self.BertAEmodel.to(self.device)
         if data_parallel: # use Data Parallelism with Multi-GPU
@@ -125,29 +164,29 @@ class Trainer():
                     batch = [t.to(self.device) for t in batch]
                     input_ids, segment_ids, input_mask, class_id, class_label = batch
 
-                    r2 = self.BertAEmodel(input_ids, segment_ids, input_mask)
-                    batch_vec = r2.cpu().detach().numpy()
+                    r2, h = self.BertAEmodel(input_ids, segment_ids, input_mask)
+                    # batch_vec = r2.cpu().detach().numpy()
+                    batch_vec = h.cpu().detach().numpy()
                     
                     for i, emb in enumerate(batch_vec):
                         if len(class_vector_list) == 0:
-                            class_vector_list.append(np.expand_dims(emb, axis=0))
+                            class_vector_list.append(np.expand_dims(emb[0], axis=0))
                             class_label_list.append(int(class_label.cpu()[i]))
                             class_name_list.append(class_names[i])
                             continue
                         if int(class_id.cpu()[i]) == last_class_id:
-                            class_vector_list[-1] = np.concatenate([class_vector_list[-1], np.expand_dims(emb, axis=0)])
+                            class_vector_list[-1] = np.concatenate([class_vector_list[-1], np.expand_dims(emb[0], axis=0)])
                             continue
-                        class_vector_list.append(np.expand_dims(emb, axis=0))
+                        class_vector_list.append(np.expand_dims(emb[0], axis=0))
                         class_label_list.append(int(class_label[i].cpu()))
                         class_name_list.append(class_names[i])
                         last_class_id = int(class_id.cpu()[i])
 
             with open(apk_file.replace('.txt', postfix), 'wb') as f:
-                # apk_label = max(class_label_list)
-                apk_label = 0
+                apk_label = max(class_label_list)
                 pickle.dump([class_vector_list, class_label_list, class_name_list, apk_label], f)
 
-    def train(self, data_file, vocab, batch_size, recompute_class_embeddings, token_max_len=512, postfix='.locAE128.pkl'):
+    def train(self, data_file, vocab, batch_size, recompute_class_embeddings, token_max_len=512, postfix='.loc768.pkl'):
         """ Train Loop """
         if recompute_class_embeddings:
             self.compute_class_embeddings(data_file, vocab, postfix, token_max_len)
@@ -163,7 +202,7 @@ class Trainer():
         for e in range(self.cfg.n_epochs):
             loss_sum = 0. # the sum of iteration losses to get average loss in every epoch
             
-            data_loader = ClassEmbeddingLoader(data_file, batch_size, postfix=postfix)
+            data_loader = ClassEmbeddingLoader(data_file, batch_size, postfix)
             apk_iter_bar = tqdm(data_loader, desc='Iter (loss=X.XXX)')
 
             for i, sample in enumerate(apk_iter_bar): 
@@ -211,7 +250,7 @@ class Trainer():
         torch.save(self.MalClassModel.state_dict(), # save model object before nn.DataParallel
             os.path.join(self.save_dir, 'model_steps_'+str(i)+'.pt'))
 
-    def evaluate(self, eval_data_file, model_weights, vocab, recompute_class_embeddings=False, training_mode=True, token_max_len=512, postfix='.locAE128.pkl'):
+    def evaluate(self, eval_data_file, model_weights, vocab, recompute_class_embeddings=False, training_mode=True, token_max_len=512, postfix='.loc768.pkl'):
         if recompute_class_embeddings:
             self.compute_class_embeddings(eval_data_file, vocab, postfix, token_max_len)
             torch.cuda.empty_cache()
@@ -265,18 +304,16 @@ class Trainer():
         eval_res_file.close()
         
 
-def main(Bert_train_cfg='config/DexBERT/retrain.json',
-         Bert_model_cfg='config/DexBERT/bert_base.json',
-         MIL_cfg='config/MCL/MCL.json',
+def main(Bert_train_cfg='config/AE_V3/pretrain.json',
+         Bert_model_cfg='config/AE_V3/bert_base_AE256.json',
+         MIL_cfg='config/MCD/MCD_v2.json',
          data_file='../Data/data/localization_train_samples.txt',
-         BertAEmodel_file='../save_dir/DexBERT/model_steps_604364.pt',
-         AE_model_file='768AE128.pth',
-         MalClassModel_file='../save_dir/malicious_code_localization/model_steps_4076.pt',
+         BertAEmodel_file='../save_dir/AutoEncoderV3/model_steps_604364.pt',
          vocab='../Data/data/pre-train/vocab.txt',
          save_dir='../save_dir/malicious_code_localization',
          log_dir='../log_dir/malicious_code_localization',
          max_len=512,
-         GPUs='0',
+         GPUs='2',
          recompute_class_embeddings=True,
          training_mode=True,
          testing_mode=True,
@@ -284,6 +321,8 @@ def main(Bert_train_cfg='config/DexBERT/retrain.json',
     
     os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
     os.environ["CUDA_VISIBLE_DEVICES"]= str(GPUs)
+
+    MalClassModel_file = os.path.join(save_dir, 'model_steps_4076.pt')
 
     Bert_train_cfg = train.Config.from_json(Bert_train_cfg)
     Bert_model_cfg = models.Config.from_json(Bert_model_cfg)
@@ -294,25 +333,21 @@ def main(Bert_train_cfg='config/DexBERT/retrain.json',
     if recompute_class_embeddings:
         BertAE = BertAEModel(Bert_model_cfg)
 
-        # BertAE.load_state_dict(torch.load(BertAEmodel_file), strict=False)
-
         pretrained_state_dict = torch.load(BertAEmodel_file)
         # Filter out the keys corresponding to the layer you want to skip
-        filtered_state_dict = {k: v for k, v in pretrained_state_dict.items() if "AE_Layer_1" not in k and "AE_Layer_2" not in k}
+        filtered_state_dict = {k: v for k, v in pretrained_state_dict.items() if "AE_Layer_2" not in k}
         BertAE.load_state_dict(filtered_state_dict, strict=False)
-        device = torch.device("cuda:0")
-        BertAE.load_state_dict(torch.load(AE_model_file, map_location=device), strict=False)
     else:
         BertAE = None
 
-    MalClassModel = PredictionModel()
+    MalClassModel = MaliciousClassDetector()
     optimizer_MIL = optim.optim4GPU(MIL_cfg, MalClassModel)
     
     trainer = Trainer(MIL_cfg, BertAE, MalClassModel, optimizer_MIL, save_dir, log_dir, get_device())
     if training_mode:
-        trainer.train(data_file, vocab, MIL_cfg.MCD_batch_size, recompute_class_embeddings, max_len, postfix='.locAE128.pkl')
+        trainer.train(data_file, vocab, MIL_cfg.MCD_batch_size, recompute_class_embeddings, max_len, postfix='.loc768.pkl')
     if testing_mode:
-        trainer.evaluate(data_file.replace('train', 'test'), MalClassModel_file, vocab, recompute_class_embeddings, training_mode, max_len, postfix='.locAE128.pkl')
+        trainer.evaluate(data_file.replace('train', 'test'), MalClassModel_file, vocab, recompute_class_embeddings, training_mode, max_len, postfix='.loc768.pkl')
     if time_cost:
         trainer.compute_infer_time(data_file, vocab, token_max_len=max_len)
 

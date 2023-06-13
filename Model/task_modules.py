@@ -151,14 +151,15 @@ class BertAEModel(nn.Module):
         self.transformer = models.Transformer(cfg)
 
         # auto-encoder
-        self.AE_Layer_1 = nn.Linear(cfg.max_len*cfg.dim, cfg.max_len)
+        self.AE_Layer_1 = nn.Linear(cfg.dim, cfg.max_len)
         self.AE_Layer_2 = nn.Linear(cfg.max_len, cfg.class_vec_len)
 
     def forward(self, input_ids, segment_ids, input_mask):
         h = self.transformer(input_ids, segment_ids, input_mask)
 
         # auto-encoder
-        r1 = torch.flatten(h, start_dim=1)
+        # r1 = torch.flatten(h, start_dim=1)
+        r1 = h[:,0]
         x = self.AE_Layer_1(r1)
         r2 = self.AE_Layer_2(x)
 

@@ -16,11 +16,91 @@ from random import random
 import models
 import optim
 import train
+
+from MaliciousCodeLocalization import Trainer as BaseTrainer
+from task_modules import ClassSeqDataLoader as BaseLoader
+from task_modules import Preprocess4EmbeddingIntegration, Config
+from utils import set_seeds, get_device
 import tokenization
 
-from task_modules import Config, BertAEModel, ClassSeqDataLoader, Preprocess4EmbeddingIntegration, PredictionModel
-from utils import set_seeds, get_device
+label_dic = {'Activity': 0, 'Service': 1, 'BroadcastReceiver': 2, 'ContentProvider': 3}
 
+class BertAEModel(nn.Module):
+    "Bert Model for Pretrain : Masked LM and next sentence classification"
+    def __init__(self, cfg):
+        super().__init__()
+        self.transformer = models.Transformer(cfg)
+
+        # auto-encoder
+        self.AE_Layer_1 = nn.Linear(cfg.max_len*cfg.dim, cfg.max_len)
+        self.AE_Layer_2 = nn.Linear(cfg.max_len, cfg.class_vec_len)
+
+    def forward(self, input_ids, segment_ids, input_mask):
+        h = self.transformer(input_ids, segment_ids, input_mask)
+
+        # auto-encoder
+        r1 = torch.flatten(h, start_dim=1)
+        x = self.AE_Layer_1(r1)
+        r2 = self.AE_Layer_2(x)
+
+        return r2, h
+
+class ClassSeqDataLoader(BaseLoader):
+    """ Load class sequence from a pre-processed APK txt file. 
+    """
+    def __init__(self, file, label_file, batch_size, tokenize, max_len, pipeline=[]):
+        self.file = open(file, "r", encoding='utf-8', errors='ignore') 
+        self.gt_dic = {}
+        self.tokenize = tokenize # tokenize function
+        self.max_len = max_len # maximum length of tokens
+        self.pipeline = pipeline
+        self.batch_size = batch_size
+        self.current_class_id = 0
+        self.current_class_name = ''
+
+        for line in open(label_file, 'r').readlines():
+            class_name = line.split(':')[0]
+            gt         = line.split(':')[1].strip()
+            self.gt_dic[class_name] = gt
+        # import ipdb; ipdb.set_trace()
+    
+    def __iter__(self): # iterator to load data
+        close_file = False
+        while True and not close_file:
+            batch = []
+            batch_class_names = []
+            for _ in range(self.batch_size):
+                len_tokens = self.max_len
+
+                tokens, ClassEnd = self.read_tokens(self.file, len_tokens, discard_last_and_restart=False, keep_method_name=True)
+                
+                if ClassEnd:  # end of current class -> end of current batch
+                    self.current_class_id += 1
+                
+                if tokens is None:  # end of file
+                    self.file.close()
+                    close_file = True
+                    break
+                if len(tokens) == 0:
+                    continue 
+
+                class_id = self.current_class_id
+                try:
+                    class_label = label_dic[self.gt_dic[self.current_class_name.replace('/', '.')]]
+                except:
+                    continue
+
+                instance = (tokens, class_id, class_label)
+                for proc in self.pipeline:
+                    instance = proc(instance)
+                batch.append(instance)
+                batch_class_names.append(self.current_class_name)
+
+            if len(batch) == 0:
+                continue
+            # To Tensor
+            batch_tensors = [torch.tensor(x, dtype=torch.long) for x in zip(*batch)]
+            yield batch_tensors, batch_class_names
 
 class ClassEmbeddingLoader():
     '''Load class embedding generated from pre-trained BERT model.'''
@@ -28,7 +108,6 @@ class ClassEmbeddingLoader():
         super().__init__()
         self.apk_list = [x.split(',')[0] for x in open(malware_samp_file, 'r').readlines()]
         self.batch_size = batch_size
-        self.benign_ratio = benign_ratio
         self.shuffle_list = shuffle_list
         self.postfix = postfix
         
@@ -37,7 +116,10 @@ class ClassEmbeddingLoader():
     
     def read_class_emb(self):
         for apk_bin in self.apk_list:
-            apk_emb = pickle.load(open(apk_bin.replace('.txt', self.postfix), 'rb'))
+            try:
+                apk_emb = pickle.load(open(apk_bin.replace('.txt', self.postfix), 'rb'))
+            except:
+                continue
             class_vecs, class_labels, class_names, _ = apk_emb
             sample_list = [(x, y, z) for x, y, z in zip(class_vecs, class_labels, class_names)]
             if self.shuffle_list:
@@ -46,10 +128,7 @@ class ClassEmbeddingLoader():
                 if class_label == 1:
                     yield class_emb, class_label, class_name
                 else:
-                    if random() < self.benign_ratio:
-                        yield class_emb, class_label, class_name
-                    else:
-                        continue
+                    yield class_emb, class_label, class_name
     
     def __iter__(self):
         def process_batch(batch):
@@ -80,7 +159,24 @@ class ClassEmbeddingLoader():
             yield batch_tensors, batch_class_names
 
 
-class Trainer():
+class MaliciousClassDetector(nn.Module):
+    def __init__(self):
+        super().__init__()
+        
+        self.classifier = nn.Sequential(
+            nn.Linear(768, 64),
+            nn.Tanh(),
+            nn.Linear(64, 32),
+            nn.Tanh(),
+            nn.Linear(32, 4),
+        )
+    
+    def forward(self, x):
+        prediction = self.classifier(x)
+        return prediction
+
+
+class Trainer(BaseTrainer):
     '''MIL Training Helper'''
     def __init__(self, MIL_train_cfg, BertAEmodel, MalClassModel, optimizer_MIL, save_dir, log_dir, device):
         super(Trainer, self).__init__(MIL_train_cfg, BertAEmodel, None, optimizer_MIL, save_dir, log_dir, device)
@@ -111,7 +207,13 @@ class Trainer():
         for _, sample in enumerate(apk_iter_bar):
             apk_file, label_file = sample.strip().split(',')
             malicious_classes = [x.strip() for x in open(label_file, 'r').readlines()]
-            dataloader = ClassSeqDataLoader(apk_file, malicious_classes, self.cfg.Bert_batch_size, tokenize, token_max_len, pipeline)
+            # dataloader = ClassSeqDataLoader(apk_file, malicious_classes, self.cfg.Bert_batch_size, tokenize, token_max_len, pipeline)
+            if DataLoader is not None:
+                if not len(open(apk_file, 'r').readlines()):
+                    continue
+                dataloader = DataLoader(apk_file, label_file, self.cfg.Bert_batch_size, tokenize, token_max_len, pipeline)
+            else:
+                dataloader = ClassSeqDataLoader(apk_file, malicious_classes, self.cfg.Bert_batch_size, tokenize, token_max_len, pipeline)
         
             class_vector_list = []
             class_label_list = []
@@ -125,19 +227,20 @@ class Trainer():
                     batch = [t.to(self.device) for t in batch]
                     input_ids, segment_ids, input_mask, class_id, class_label = batch
 
-                    r2 = self.BertAEmodel(input_ids, segment_ids, input_mask)
-                    batch_vec = r2.cpu().detach().numpy()
+                    r2, h = self.BertAEmodel(input_ids, segment_ids, input_mask)
+                    # batch_vec = r2.cpu().detach().numpy()
+                    batch_vec = h.cpu().detach().numpy()
                     
                     for i, emb in enumerate(batch_vec):
                         if len(class_vector_list) == 0:
-                            class_vector_list.append(np.expand_dims(emb, axis=0))
+                            class_vector_list.append(np.expand_dims(emb[0], axis=0))
                             class_label_list.append(int(class_label.cpu()[i]))
                             class_name_list.append(class_names[i])
                             continue
                         if int(class_id.cpu()[i]) == last_class_id:
-                            class_vector_list[-1] = np.concatenate([class_vector_list[-1], np.expand_dims(emb, axis=0)])
+                            class_vector_list[-1] = np.concatenate([class_vector_list[-1], np.expand_dims(emb[0], axis=0)])
                             continue
-                        class_vector_list.append(np.expand_dims(emb, axis=0))
+                        class_vector_list.append(np.expand_dims(emb[0], axis=0))
                         class_label_list.append(int(class_label[i].cpu()))
                         class_name_list.append(class_names[i])
                         last_class_id = int(class_id.cpu()[i])
@@ -147,10 +250,10 @@ class Trainer():
                 apk_label = 0
                 pickle.dump([class_vector_list, class_label_list, class_name_list, apk_label], f)
 
-    def train(self, data_file, vocab, batch_size, recompute_class_embeddings, token_max_len=512, postfix='.locAE128.pkl'):
+    def train(self, data_file, vocab, batch_size, recompute_class_embeddings, token_max_len=512, postfix='.loc768.pkl'):
         """ Train Loop """
         if recompute_class_embeddings:
-            self.compute_class_embeddings(data_file, vocab, postfix, token_max_len)
+            self.compute_class_embeddings(data_file, vocab, postfix, token_max_len, DataLoader=ClassSeqDataLoader)
             torch.cuda.empty_cache()
                 
         self.MalClassModel.train() # train mode
@@ -163,7 +266,7 @@ class Trainer():
         for e in range(self.cfg.n_epochs):
             loss_sum = 0. # the sum of iteration losses to get average loss in every epoch
             
-            data_loader = ClassEmbeddingLoader(data_file, batch_size, postfix=postfix)
+            data_loader = ClassEmbeddingLoader(data_file, batch_size, postfix)
             apk_iter_bar = tqdm(data_loader, desc='Iter (loss=X.XXX)')
 
             for i, sample in enumerate(apk_iter_bar): 
@@ -211,9 +314,9 @@ class Trainer():
         torch.save(self.MalClassModel.state_dict(), # save model object before nn.DataParallel
             os.path.join(self.save_dir, 'model_steps_'+str(i)+'.pt'))
 
-    def evaluate(self, eval_data_file, model_weights, vocab, recompute_class_embeddings=False, training_mode=True, token_max_len=512, postfix='.locAE128.pkl'):
+    def evaluate(self, eval_data_file, model_weights, vocab, recompute_class_embeddings=False, training_mode=True, token_max_len=512, postfix='.loc768.pkl'):
         if recompute_class_embeddings:
-            self.compute_class_embeddings(eval_data_file, vocab, postfix, token_max_len)
+            self.compute_class_embeddings(eval_data_file, vocab, postfix, token_max_len, DataLoader=ClassSeqDataLoader)
             torch.cuda.empty_cache()
         
         if not training_mode:
@@ -241,42 +344,33 @@ class Trainer():
             gt_list.extend(class_label_batch.cpu().numpy().tolist())
         precision, recall, fbeta_score, support = precision_recall_fscore_support(gt_list, pre_list, beta=1.0)
 
-        FP = len(np.where((np.array(pre_list) == 1) & (np.array(gt_list) == 0))[0])
-        TN = len(np.where((np.array(pre_list) == 0) & (np.array(gt_list) == 0))[0])
-        FPR = FP / (FP + TN)
-
-        FN = len(np.where((np.array(pre_list) == 0) & (np.array(gt_list) == 1))[0])
-        TP = len(np.where((np.array(pre_list) == 1) & (np.array(gt_list) == 1))[0])
-        FNR = FN / (FN + TP)
-
         if not os.path.exists(self.log_dir):
             os.makedirs(self.log_dir)
         eval_res_file = open(os.path.join(self.log_dir, 'evaluation.txt'), 'w')
         print('  Category\tPre\tRec\tF1\tSamp_num')
         eval_res_file.write('  Category\tPre\tRec\tF1\tSamp_num\n')
-        print('Benignware\t{:.4f}\t{:.4f}\t{:.4f}\t{}'.format(precision[0], recall[0], fbeta_score[0], support[0]))
-        eval_res_file.write('Benignware\t{:.4f}\t{:.4f}\t{:.4f}\t{}\n'.format(precision[0], recall[0], fbeta_score[0], support[0]))
-        print('   Malware\t{:.4f}\t{:.4f}\t{:.4f}\t{}'.format(precision[1], recall[1], fbeta_score[1], support[1]))
-        eval_res_file.write('   Malware\t{:.4f}\t{:.4f}\t{:.4f}\t{}\n'.format(precision[1], recall[1], fbeta_score[1], support[1]))
-        print('False Negative Rate: {:.4f}'.format(FNR))
-        eval_res_file.write('False Negative Rate: {:.4f}\n'.format(FNR))
-        print('False Positive Rate: {:.4f}'.format(FPR))
-        eval_res_file.write('False Positive Rate: {:.4f}\n'.format(FPR))
+        print('Activity\t{:.4f}\t{:.4f}\t{:.4f}\t{}'.format(precision[0], recall[0], fbeta_score[0], support[0]))
+        eval_res_file.write('Activity\t{:.4f}\t{:.4f}\t{:.4f}\t{}\n'.format(precision[0], recall[0], fbeta_score[0], support[0]))
+        print('Service\t{:.4f}\t{:.4f}\t{:.4f}\t{}'.format(precision[1], recall[1], fbeta_score[1], support[1]))
+        eval_res_file.write('Service\t{:.4f}\t{:.4f}\t{:.4f}\t{}\n'.format(precision[1], recall[1], fbeta_score[1], support[1]))
+        print('BroadcastReceiver\t{:.4f}\t{:.4f}\t{:.4f}\t{}'.format(precision[2], recall[2], fbeta_score[2], support[2]))
+        eval_res_file.write('BroadcastReceiver\t{:.4f}\t{:.4f}\t{:.4f}\t{}\n'.format(precision[2], recall[2], fbeta_score[2], support[2]))
+        print('ContentProvider\t{:.4f}\t{:.4f}\t{:.4f}\t{}'.format(precision[3], recall[3], fbeta_score[3], support[3]))
+        eval_res_file.write('ContentProvider\t{:.4f}\t{:.4f}\t{:.4f}\t{}\n'.format(precision[3], recall[3], fbeta_score[3], support[3]))
         eval_res_file.close()
         
 
-def main(Bert_train_cfg='config/DexBERT/retrain.json',
-         Bert_model_cfg='config/DexBERT/bert_base.json',
-         MIL_cfg='config/MCL/MCL.json',
-         data_file='../Data/data/localization_train_samples.txt',
+def main(Bert_train_cfg='config/AE_V3/pretrain.json',
+         Bert_model_cfg='config/AE_V3/bert_base_AE128.json',
+         MIL_cfg='config/MCD/MCD.json',
+         data_file='../Data/data/component_classification/train/data_file.txt',
          BertAEmodel_file='../save_dir/DexBERT/model_steps_604364.pt',
-         AE_model_file='768AE128.pth',
-         MalClassModel_file='../save_dir/malicious_code_localization/model_steps_4076.pt',
          vocab='../Data/data/pre-train/vocab.txt',
          save_dir='../save_dir/malicious_code_localization',
          log_dir='../log_dir/malicious_code_localization',
          max_len=512,
-         GPUs='0',
+         GPUs='1',
+         emb_postfix='.loc768.pkl',
          recompute_class_embeddings=True,
          training_mode=True,
          testing_mode=True,
@@ -284,6 +378,8 @@ def main(Bert_train_cfg='config/DexBERT/retrain.json',
     
     os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
     os.environ["CUDA_VISIBLE_DEVICES"]= str(GPUs)
+
+    MalClassModel_file = os.path.join(save_dir, 'model_steps_11001.pt')
 
     Bert_train_cfg = train.Config.from_json(Bert_train_cfg)
     Bert_model_cfg = models.Config.from_json(Bert_model_cfg)
@@ -294,25 +390,24 @@ def main(Bert_train_cfg='config/DexBERT/retrain.json',
     if recompute_class_embeddings:
         BertAE = BertAEModel(Bert_model_cfg)
 
-        # BertAE.load_state_dict(torch.load(BertAEmodel_file), strict=False)
-
         pretrained_state_dict = torch.load(BertAEmodel_file)
         # Filter out the keys corresponding to the layer you want to skip
         filtered_state_dict = {k: v for k, v in pretrained_state_dict.items() if "AE_Layer_1" not in k and "AE_Layer_2" not in k}
         BertAE.load_state_dict(filtered_state_dict, strict=False)
-        device = torch.device("cuda:0")
-        BertAE.load_state_dict(torch.load(AE_model_file, map_location=device), strict=False)
+        # device = torch.device("cuda:0")
+        # BertAE.load_state_dict(torch.load(AE_model_file, map_location=device), strict=False)
     else:
         BertAE = None
 
-    MalClassModel = PredictionModel()
+    MalClassModel = MaliciousClassDetector()
     optimizer_MIL = optim.optim4GPU(MIL_cfg, MalClassModel)
     
     trainer = Trainer(MIL_cfg, BertAE, MalClassModel, optimizer_MIL, save_dir, log_dir, get_device())
     if training_mode:
-        trainer.train(data_file, vocab, MIL_cfg.MCD_batch_size, recompute_class_embeddings, max_len, postfix='.locAE128.pkl')
+        trainer.train(data_file, vocab, MIL_cfg.MCD_batch_size, recompute_class_embeddings, max_len, postfix=emb_postfix)
     if testing_mode:
-        trainer.evaluate(data_file.replace('train', 'test'), MalClassModel_file, vocab, recompute_class_embeddings, training_mode, max_len, postfix='.locAE128.pkl')
+        trainer.evaluate(data_file.replace('train', 'test'), MalClassModel_file, vocab, recompute_class_embeddings, training_mode, max_len, postfix=emb_postfix)
+        # trainer.evaluate(data_file, MalClassModel_file, vocab, recompute_class_embeddings, training_mode, max_len)
     if time_cost:
         trainer.compute_infer_time(data_file, vocab, token_max_len=max_len)
 
