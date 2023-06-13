@@ -18,9 +18,9 @@ Effective, Task-Agnostic and Fine-grained Representation Learning of Android Byt
 ## Instruction
   -  For most users, if you just want to use a pre-trained DexBERT to generate class features for your own Android analysis tasks, please skip the pretraining stage and download our pre-trained DexBERT model using the link provided below.
   
-  - For readers who want to replicate our experiments, please follow the steps below to pre-train a DexBERT model and apply it in malicious code localization and app defect detection.
+  - For readers who want to replicate our experiments, please follow the steps below to pre-train a DexBERT model and apply it in malicious code localization, app defect detection, and component type classification.
 
-  - Please find some smali examples for malicious code localization and app defect detection in the folder './examples'.
+  - Please find some smali examples in the folder './Data/examples'.
 
 ## DexBERT Pre-training
   - Data preparation: 
