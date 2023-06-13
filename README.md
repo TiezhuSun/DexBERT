@@ -51,5 +51,17 @@ Effective, Task-Agnostic and Fine-grained Representation Learning of Android Byt
   - Training & Evaluation:
     - ```python AppDefectDetection.py```
 
+## Component Type Classification
+  - Data preparation:
+    - ```cd Data & python data4component.py```
+  - Training & Evaluation:
+    - ```cd Models & python ComponentTypeClassification_FirstState768.py```
+
 ## Compute Model Flops
   - ```python count_flops.py```
+
+## Notes:
+  - Embedding Size
+    - To find a reasonable trade-off between model computation cost and performance, we conducted an ablation study exploring the impact of DexBERT embedding size on three downstream tasks. The experiments contain three different sizes for the hidden embedding of the AutoEncoder (AE), specifically 256, 128, and 64. Additionally, we evaluated the performance by directly utilizing the first state vector of the raw DexBERT embedding, which has a size of 768, without applying any dimension reduction from the AutoEncoder. 
+    - The experimental results reveal that in the task of Malicious Code Localization, a decrease in vector size does not lead to a significant loss in the performance, until the size is reduced to 128. As for the tasks of Defect Detection and Component Type Classification, the experimental results demonstrate that a larger embedding size resulted in a considerable improvement in performance. However, a size of 128 also offered a solid trade-off for these two tasks, supporting satisfactory performance with a metric score exceeding 0.9.
+  - AutoEncoder Module: We considered two potential inputs for the AutoEncoder: the full DexBERT embedding (512x768), and the first state vector of the embedding (size 768). From our observations, these inputs yielded similar performance. However, using the first state vector of the embedding was found to be more efficient, leading to faster convergence during fine-tuning for downstream tasks. Therefore, we use the first state vector as the default input for AutoEncoder.
